@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Enable when the repository contains a .NET solution.
+  # - package-ecosystem: nuget
+  #   directory: /
+  #   schedule:
+  #     interval: weekly
+
+  # Enable when the repository contains pyproject.toml and uv.lock.
+  # - package-ecosystem: uv
+  #   directory: /
+  #   schedule:
+  #     interval: weekly

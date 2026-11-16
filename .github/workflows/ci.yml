@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect project types
+    runs-on: ubuntu-latest
+    outputs:
+      dotnet: ${{ steps.detect.outputs.dotnet }}
+      python: ${{ steps.detect.outputs.python }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Look for .NET and Python projects
+        id: detect
+        shell: bash
+        run: |
+          dotnet_file="$(find . -path ./.git -prune -o -path ./templates -prune -o \
+            \( -name '*.sln' -o -name '*.slnx' -o -name '*.csproj' \) -print -quit)"
+          if [ -n "$dotnet_file" ]; then
+            echo "dotnet=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dotnet=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -f pyproject.toml ]; then
+            echo "python=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "python=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  dotnet:
+    name: .NET
+    needs: detect
+    if: needs.detect.outputs.dotnet == 'true'
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_NOLOGO: true
+      DOTNET_CLI_TELEMETRY_OPTOUT: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build
+
+      - name: Check formatting
+        run: dotnet format --verify-no-changes --no-restore
+
+  python:
+    name: Python
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync ${{ hashFiles('uv.lock') != '' && '--locked' || '' }}
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run pyright
+
+      - name: Test
+        run: uv run pytest
+
+  ci:
+    name: CI result
+    if: always()
+    needs: [detect, dotnet, python]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        shell: bash
+        run: |
+          for result in "${{ needs.detect.result }}" "${{ needs.dotnet.result }}" "${{ needs.python.result }}"; do
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "A job finished with: $result"
+              exit 1
+            fi
+          done
+          echo "All jobs passed or were skipped."
